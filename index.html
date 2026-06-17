@@ -793,11 +793,11 @@ a { text-decoration: none; color: inherit; }
 <div id="app">
   <!-- Top Nav -->
   <nav id="topNav">
-    <div class="nav-logo">🌳<span>TradeTree</span></div>
+    <div class="nav-logo" id="navLogo">🌳<span>TradeTree</span></div>
     <div class="nav-spacer"></div>
     <div class="market-pill" id="marketPill">
-      <button class="active" onclick="setMarket('us')">🇺🇸 US</button>
-      <button onclick="setMarket('sa')">🇸🇦 SA</button>
+      <button id="mktBtnUS" onclick="setMarket('us')">🇺🇸 أمريكي</button>
+      <button id="mktBtnSA" onclick="setMarket('sa')">🇸🇦 سعودي</button>
     </div>
     <button class="nav-btn" onclick="toggleTheme()" title="تغيير الوضع">
       <i class="ti ti-sun" id="themeIcon"></i>
@@ -1085,10 +1085,15 @@ function toggleTheme() {
 function setMarket(m) {
   S.market = m;
   lss('tt_market', m);
-  const btns = document.querySelectorAll('#marketPill button');
-  btns[0].className = m === 'us' ? 'active' : '';
-  btns[1].className = m === 'sa' ? 'active' : '';
+  updateMarketPill();
   if (S.page === 'home') renderHome();
+}
+
+function updateMarketPill() {
+  const us = document.getElementById('mktBtnUS');
+  const sa = document.getElementById('mktBtnSA');
+  if (us) us.className = S.market === 'us' ? 'active' : '';
+  if (sa) sa.className = S.market === 'sa' ? 'active' : '';
 }
 
 // ══════════════════════════════════════════
@@ -1182,18 +1187,42 @@ const SCALP_STOCKS  = ['AMD','SOFI','PLTR','MARA','SOUN','RIVN','TSLA','NVDA'];
 const INVEST_STOCKS = ['AAPL','MSFT','AMZN','GOOGL','BRK.B','JNJ','V','JPM'];
 const SA_STOCKS     = ['2222.SR','1120.SR','2010.SR','1010.SR','2380.SR'];
 
+
+// Rotating market ticker
+let _tickerInterval = null;
+function startMarketTicker(data) {
+  if (!data || !data.length) return;
+  const inner = document.getElementById('mktTickerInner');
+  if (!inner) return;
+  clearInterval(_tickerInterval);
+  let idx = 0;
+  function show() {
+    const d = data[idx % data.length];
+    inner.innerHTML = `<span style="font-family:var(--font-en);font-weight:600">${d.label}</span> <span style="font-weight:700;color:${d.pct>=0?'var(--green)':'var(--red)'}">${fmtPct(d.pct)}</span> <span style="color:var(--text3)">$${d.price.toFixed(2)}</span>`;
+    idx++;
+  }
+  show();
+  _tickerInterval = setInterval(show, 3000);
+}
+
 function renderHome() {
   const styleMap = { scalp: 'قصير', swing: 'متوسط', invest: 'طويل' };
   const pg = document.getElementById('page');
 
   pg.innerHTML = `
-    <!-- Market Status -->
-    <div class="market-status" id="mktStatus">
-      <div class="status-dot neutral" id="mktDot"></div>
-      <span class="status-label neutral" id="mktLabel">جاري التحليل...</span>
-      <div class="status-indices" id="mktIndices">
-        <div class="spinner"></div>
+    <!-- Market Status Bar with rotating indices -->
+    <div id="mktStatus" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
+      <div id="mktDot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div id="mktLabel" style="font-size:13px;font-weight:700">جاري التحليل...</div>
+        <!-- Rotating indices ticker -->
+        <div id="mktTicker" style="font-size:11px;color:var(--text3);margin-top:2px;height:16px;overflow:hidden">
+          <div id="mktTickerInner" style="transition:transform .5s ease"></div>
+        </div>
       </div>
+      <button onclick="loadMarketStatus()" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;padding:2px">
+        <i class="ti ti-refresh"></i>
+      </button>
     </div>
 
     <!-- Search -->
@@ -1285,8 +1314,14 @@ async function loadMarketStatus() {
     lbl.className = `status-label ${cls}`;
     lbl.textContent = label;
 
-    const spyNorm = normQuote(spy);
-    idx.innerHTML = `<div class="idx-item">S&P 500 <span class="${spyNorm.pct>=0?'up':'dn'}">${fmtPct(spyNorm.pct)}</span></div>`;
+    // Build rotating ticker data
+    const tickerData = arr.map(q => {
+      const n = normQuote(q);
+      const labels = { SPY: 'S&P 500', QQQ: 'Nasdaq', DIA: 'Dow Jones' };
+      return { label: labels[q.symbol] || q.symbol, pct: n.pct, price: n.price };
+    });
+    // Start rotating
+    startMarketTicker(tickerData);
   } catch(e) {
     const lbl = document.getElementById('mktLabel');
     const dot = document.getElementById('mktDot');
@@ -1475,6 +1510,7 @@ async function renderStock() {
     const scoreC   = scoreClass(finalScore);
 
     // Cache data for tabs
+    const st = sd; // keep for compat
     S.stockData = { q, st, val, fin, tech, techScore, finScore, newsScore, finalScore, entry, stop, t1, t2, t3, rr };
 
     document.getElementById('stockContent').innerHTML = `
@@ -2260,6 +2296,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btns[0].className = S.market === 'us' ? 'active' : '';
   btns[1].className = S.market === 'sa' ? 'active' : '';
 
+  updateMarketPill();
   nav('home');
 });
 </script>
