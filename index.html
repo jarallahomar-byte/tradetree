@@ -994,7 +994,7 @@ function normQuote(q) {
   if (!q) return { ticker:'', name:'', price:0, change:0, pct:0, high:0, low:0, high52:0, low52:0, volume:0, mktCap:null, pe:null, beta:null, marketState:'CLOSED', preMarket:null, postMarket:null };
   // Yahoo Finance format
   const price  = parseFloat(q.price || q.regularMarketPrice || q.close || 0);
-  // FMP direct pct field
+  // Direct pct field
   if (q.changesPercentage !== undefined) { const p2 = q.changesPercentage; const c2 = q.change || 0; return { ticker: q.symbol||q.ticker||'', name: q.name||q.symbol||'', price, change: parseFloat(c2), pct: parseFloat(p2), high: parseFloat(q.high||q.dayHigh||price), low: parseFloat(q.low||q.dayLow||price), high52: parseFloat(q.high52||q.yearHigh||price), low52: parseFloat(q.low52||q.yearLow||price), volume: q.volume||0, mktCap: q.marketCap||null, pe: q.pe||null, beta: q.beta||null, marketState: q.marketState||'CLOSED', preMarket: q.preMarket||null, postMarket: q.postMarket||null }; }
   const prev   = parseFloat(q.previousClose || q.previous_close || q.chartPreviousClose || price);
   const change = price - prev;
@@ -1214,7 +1214,7 @@ function setStyle(s) {
 // Market Status
 async function loadMarketStatus() {
   try {
-    // Try FMP indices first, fallback to ETFs
+    // Get market indices
     let arr = [];
     try {
       arr = await getFmpIndices();
@@ -1249,7 +1249,7 @@ async function loadMarketStatus() {
     const lbl = document.getElementById('mktLabel');
     const dot = document.getElementById('mktDot');
     const idx = document.getElementById('mktIndices');
-    if (lbl) lbl.textContent = !S.tdKey ? 'أضف FMP API Key من الإعدادات ⚙️' : 'تعذّر تحميل بيانات السوق';
+    if (lbl) lbl.textContent = !S.tdKey ? 'أضف Twelve Data API Key من الإعدادات ⚙️' : 'تعذّر تحميل بيانات السوق';
     if (dot) dot.className = 'status-dot neutral';
     if (idx) idx.innerHTML = '';
   }
@@ -2095,13 +2095,13 @@ function renderSettings() {
     <div class="card" style="margin-bottom:10px">
       <div class="card-title"><i class="ti ti-key"></i> مفاتيح API</div>
 
-      <!-- FMP Key - Required -->
+      <!-- TD Key - Required -->
       <div style="margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
-          <div style="font-size:11px;color:var(--text3);font-weight:600">FMP API Key</div>
+          <div style="font-size:11px;color:var(--text3);font-weight:600">Twelve Data API Key</div>
           <span class="tag tag-green" style="font-size:9px">مطلوب — للأسعار</span>
         </div>
-        <input type="password" id="set_fmp" value="${S.tdKey}" placeholder="أدخل مفتاح Financial Modeling Prep"
+        <input type="password" id="set_td" value="${S.tdKey}" placeholder="أدخل مفتاح Twelve Dataep"
           style="width:100%;padding:10px 12px;border-radius:var(--radius-xs);border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font-en)">
         <div style="font-size:10px;color:var(--text3);margin-top:4px">
           مجاني — 250 طلب/يوم من
@@ -2148,9 +2148,9 @@ function renderSettings() {
 }
 
 function saveSettings() {
-  S.tdKey = document.getElementById('set_fmp')?.value.trim() || '';
+  S.tdKey = document.getElementById('set_td')?.value.trim() || '';
   S.clKey  = document.getElementById('set_cl')?.value.trim() || '';
-  lss('tt_fmpkey', S.tdKey);
+  lss('tt_tdkey', S.tdKey);
   lss('tt_clkey',  S.clKey);
   alert('تم حفظ المفاتيح ✓');
 }
