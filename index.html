@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="light">
 <head>
@@ -880,7 +881,7 @@ const _td = { count:0, resetAt:0 };
 
 async function tdFetch(endpoint, params={}) {
   const key = S.tdKey;
-  if (!key) throw new Error('أضف Twelve Data API Key من الإعدادات ⚙️');
+  if (!key) throw new Error('أضف API Key من الإعدادات');
   // Rate guard: 7/min
   const now = Date.now();
   if (now > _td.resetAt) { _td.count=0; _td.resetAt=now+61000; }
@@ -977,7 +978,7 @@ async function yfQuote(symbols) {
     } catch {}
   }
 
-  throw new Error('أضف Finnhub API Key من الإعدادات ⚙️');
+  throw new Error('أضف Finnhub API Key من الإعدادات ⚙️ للأسعار');
 }
 
 // ── Stats: Finnhub basic metrics ──
@@ -1475,7 +1476,7 @@ async function loadIdeas(force = false) {
     lss('tt_ideas_ts_' + S.style, Date.now());
     renderIdeas(ideas);
   } catch(e) {
-    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p></div>`;
+    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="nav('settings')"><i class="ti ti-settings"></i> الإعدادات</button></div>`;
   }
 }
 
@@ -2010,7 +2011,7 @@ async function loadWatchlistFull() {
         </div>
       </div>`).join('');
   } catch(e) {
-    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p></div>`;
+    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="nav('settings')"><i class="ti ti-settings"></i> الإعدادات</button></div>`;
   }
 }
 
@@ -2088,7 +2089,7 @@ async function loadDiscoverStocks() {
         </div>`;
     }).join('');
   } catch(e) {
-    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p></div>`;
+    box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>${e.message}</p><button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="nav('settings')"><i class="ti ti-settings"></i> الإعدادات</button></div>`;
   }
 }
 
