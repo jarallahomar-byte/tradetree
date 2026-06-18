@@ -1268,27 +1268,9 @@ const SA_STOCKS     = ['2222.SR','1120.SR','2010.SR','1010.SR','2380.SR'];
 
 function applyMarketStatus(data) {
   if (!data) return;
-  const dot = document.getElementById('mktDot');
-  const lbl = document.getElementById('mktLabel');
-  if (!dot || !lbl) return;
-  const pct = data.pct || 0;
-  if (pct > 0.5) {
-    dot.style.background = 'var(--green)';
-    dot.style.boxShadow = '0 0 0 3px rgba(22,163,74,.15)';
-    lbl.textContent = '🟢 سوق صاعد';
-    lbl.style.color = 'var(--green)';
-  } else if (pct < -0.5) {
-    dot.style.background = 'var(--red)';
-    dot.style.boxShadow = '0 0 0 3px rgba(220,38,38,.15)';
-    lbl.textContent = '🔴 سوق هابط';
-    lbl.style.color = 'var(--red)';
-  } else {
-    dot.style.background = 'var(--amber)';
-    dot.style.boxShadow = '0 0 0 3px rgba(217,119,6,.15)';
-    lbl.textContent = '🟡 سوق محايد';
-    lbl.style.color = 'var(--amber)';
+  if (data.tickerData && data.tickerData.length) {
+    startMarketTicker(data.tickerData);
   }
-  if (data.tickerData) startMarketTicker(data.tickerData);
 }
 
 // Scrolling market ticker — fetches all 3 indices
@@ -1316,22 +1298,24 @@ function startMarketTicker(data) {
   if (!data || !data.length) return;
   const wrap = document.getElementById('mktTicker');
   if (!wrap) return;
-  clearInterval(_tickerInterval);
 
-  // Build scrolling text
-  const text = data.map(d =>
-    `<span style="font-family:var(--font-en);font-weight:600;margin-left:6px">${d.label}</span>` +
-    `<span style="font-weight:800;color:${d.pct>=0?'var(--green)':'var(--red)'}"> ${d.pct>=0?'▲':'▼'} ${Math.abs(d.pct).toFixed(2)}%</span>` +
-    `<span style="color:var(--text3);font-family:var(--font-en)"> $${d.price.toFixed(2)}</span>` +
-    `<span style="color:var(--border);margin:0 12px">|</span>`
-  ).join('');
+  const text = data.map(d => {
+    const up = d.pct >= 0;
+    const color = up ? 'var(--green)' : 'var(--red)';
+    const arrow = up ? '▲' : '▼';
+    return `<span style="font-family:var(--font-en);font-weight:700;color:var(--text2)">${d.label}</span>` +
+           `<span style="font-weight:800;color:${color};font-family:var(--font-en)"> ${arrow}${Math.abs(d.pct).toFixed(2)}%</span>` +
+           `<span style="font-family:var(--font-en);color:var(--text3)"> $${d.price.toFixed(2)}</span>` +
+           `<span style="color:var(--border2);margin:0 16px;font-size:14px">·</span>`;
+  }).join('');
 
-  wrap.innerHTML = `
-    <div style="overflow:hidden;white-space:nowrap;width:100%">
-      <div id="tickerScroll" style="display:inline-block;animation:tickerMove 20s linear infinite;font-size:11px">
-        ${text}${text}
-      </div>
-    </div>`;
+  // Duplicate for seamless loop
+  const speed = data.length * 8;
+  wrap.innerHTML = `<div style="overflow:hidden;white-space:nowrap">
+    <span style="display:inline-block;animation:tickerMove ${speed}s linear infinite;font-size:12px;line-height:1.8">
+      ${text}${text}${text}
+    </span>
+  </div>`;
 }
 
 function renderHome() {
@@ -1339,19 +1323,11 @@ function renderHome() {
   const pg = document.getElementById('page');
 
   pg.innerHTML = `
-    <!-- Market Status Bar with rotating indices -->
-    <div id="mktStatus" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">
-      <div id="mktDot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);flex-shrink:0"></div>
-      <div style="flex:1;min-width:0">
-        <div id="mktLabel" style="font-size:13px;font-weight:700">جاري التحليل...</div>
-        <!-- Rotating indices ticker -->
-        <div id="mktTicker" style="font-size:11px;color:var(--text3);margin-top:2px;height:16px;overflow:hidden">
-          <div id="mktTickerInner" style="transition:transform .5s ease"></div>
-        </div>
+    <!-- Market Ticker Bar -->
+    <div id="mktStatus" style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 14px;margin-bottom:12px;overflow:hidden">
+      <div id="mktTicker" style="width:100%">
+        <div style="font-size:11px;color:var(--text3);text-align:center" id="mktLabel">جاري تحميل المؤشرات...</div>
       </div>
-      <button onclick="loadMarketStatus()" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;padding:2px">
-        <i class="ti ti-refresh"></i>
-      </button>
     </div>
 
     <!-- Search -->
