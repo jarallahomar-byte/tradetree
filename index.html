@@ -863,143 +863,135 @@ function lss(k, v) {
 // ══════════════════════════════════════════
 // API
 // ══════════════════════════════════════════
-// ── Twelve Data API ──
-function getTdKey() { return S.tdKey || ''; }
+// ══════════════════════════════════════════
+// API LAYER — max 1-2 calls per action
+// ══════════════════════════════════════════
 
-// Rate limiter: max 8 requests per minute
-const _tdQueue = { count: 0, reset: 0 };
+// ── Twelve Data (Prices) ──
+const _td = { count:0, resetAt:0 };
 
-async function tdApi(endpoint, params = {}) {
-  const key = getTdKey();
+async function tdFetch(endpoint, params={}) {
+  const key = S.tdKey;
   if (!key) throw new Error('أضف Twelve Data API Key من الإعدادات ⚙️');
-
-  // Rate limit: 8/min free tier
+  // Rate guard: 7/min
   const now = Date.now();
-  if (now > _tdQueue.reset) { _tdQueue.count = 0; _tdQueue.reset = now + 60000; }
-  if (_tdQueue.count >= 7) {
-    const wait = _tdQueue.reset - now;
-    await new Promise(r => setTimeout(r, wait + 500));
-    _tdQueue.count = 0;
-    _tdQueue.reset = Date.now() + 60000;
+  if (now > _td.resetAt) { _td.count=0; _td.resetAt=now+61000; }
+  if (_td.count >= 7) {
+    await new Promise(r => setTimeout(r, _td.resetAt - Date.now() + 200));
+    _td.count=0; _td.resetAt=Date.now()+61000;
   }
-  _tdQueue.count++;
-
-  const q = new URLSearchParams({ ...params, apikey: key }).toString();
+  _td.count++;
+  const q = new URLSearchParams({...params, apikey:key}).toString();
   const res = await fetch(`https://api.twelvedata.com${endpoint}?${q}`);
-  if (res.status === 429) throw new Error('تجاوزت الحد المجاني — انتظر دقيقة وأعد المحاولة');
-  if (!res.ok) throw new Error('خطأ في الاتصال بـ Twelve Data');
+  if (res.status===429) throw new Error('تجاوزت الحد — انتظر دقيقة');
+  if (res.status===403) throw new Error('هذه الميزة تحتاج خطة مدفوعة');
+  if (!res.ok) throw new Error('خطأ في الاتصال');
   const d = await res.json();
-  if (d.status === 'error') throw new Error(d.message || 'خطأ في API');
+  if (d.status==='error') throw new Error(d.message||'خطأ API');
   return d;
 }
 
+// ── Normalized quote ──
+function tdNorm(q) {
+  if (!q || !q.symbol) return null;
+  const price = parseFloat(q.close||0);
+  const prev  = parseFloat(q.previous_close||price);
+  const pct   = prev ? ((price-prev)/prev*100) : 0;
+  return {
+    ticker:  q.symbol,
+    name:    q.name||q.symbol,
+    price,
+    change:  price-prev,
+    pct,
+    high:    parseFloat(q.high||price),
+    low:     parseFloat(q.low||price),
+    high52:  parseFloat(q.fifty_two_week?.high||price),
+    low52:   parseFloat(q.fifty_two_week?.low||price),
+    volume:  parseInt(q.volume||0),
+    mktCap:  null,
+    pe:      null,
+    beta:    null,
+    exchange: q.exchange||'',
+    marketOpen: q.is_market_open||false,
+    currency: q.currency||'USD',
+  };
+}
+
+// ── Single batch quote call ──
 async function yfQuote(symbols) {
-  const syms = Array.isArray(symbols) ? symbols : [symbols];
-  const d = await tdApi('/quote', { symbol: syms.join(',') });
+  const syms = (Array.isArray(symbols)?symbols:[symbols]).filter(Boolean);
+  if (!syms.length) return [];
+  const d = await tdFetch('/quote', {symbol: syms.join(',')});
   const arr = Array.isArray(d) ? d : [d];
-  return arr.filter(x => x && x.symbol).map(q => ({
-    symbol: q.symbol,
-    name: q.name || q.symbol,
-    price: parseFloat(q.close || 0),
-    previousClose: parseFloat(q.previous_close || q.close || 0),
-    high: parseFloat(q.high || 0),
-    low: parseFloat(q.low || 0),
-    volume: parseInt(q.volume || 0),
-    high52: parseFloat(q.fifty_two_week?.high || q.close || 0),
-    low52: parseFloat(q.fifty_two_week?.low || q.close || 0),
-    marketCap: null,
-    currency: q.currency || 'USD',
-    preMarket: q.extended_change ? parseFloat(q.close) + parseFloat(q.extended_change) : null,
-    postMarket: null,
-    marketState: q.is_market_open ? 'REGULAR' : 'CLOSED',
-    changesPercentage: parseFloat(q.percent_change || 0),
-    change: parseFloat(q.change || 0),
-    exchange: q.exchange || '',
-  }));
+  return arr.map(tdNorm).filter(Boolean);
 }
 
-async function yfStats(symbol) {
-  try {
-    const d = await tdApi('/statistics', { symbol });
-    const st = d.statistics || {};
-    const v = st.valuations_metrics || {};
-    const f = st.financials || {};
-    return {
-      summaryDetail: {
-        trailingPE:    { raw: parseFloat(v.trailing_pe || 0) || null },
-        dividendYield: { raw: parseFloat(v.dividend_yield || 0) / 100 || null },
-        beta:          { raw: parseFloat(v.beta || 0) || null },
-      },
-      defaultKeyStatistics: {
-        trailingEps: { raw: parseFloat(v.trailing_eps || 0) || null },
-        priceToBook: { raw: parseFloat(v.price_to_book_mrq || 0) || null },
-      },
-      financialData: {
-        debtToEquity:  { raw: parseFloat(f.total_debt_to_equity || 0) || null },
-        returnOnEquity:{ raw: parseFloat(f.return_on_equity_ttm || 0) || null },
-        grossMargins:  { raw: parseFloat(f.gross_profit_margin || 0) || null },
-        currentRatio:  { raw: parseFloat(f.current_ratio || 0) || null },
-      },
-    };
-  } catch { return {}; }
-}
+// ── Stats disabled (needs paid plan) — Claude handles financials ──
+async function yfStats(symbol) { return {}; }
 
+// ── News: Finnhub first, RSS fallback ──
 async function yfNews(symbol) {
-  const sym = Array.isArray(symbol) ? symbol[0] : symbol.split(',')[0].trim();
-
-  // 1. Finnhub - best free news (60 req/min)
+  const sym = Array.isArray(symbol)?symbol[0]:symbol.split(',')[0].trim();
+  // Finnhub
   if (S.finnhubKey) {
     try {
       const today = new Date().toISOString().slice(0,10);
-      const from  = new Date(Date.now() - 7*24*60*60*1000).toISOString().slice(0,10);
+      const from  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
       const res = await fetch(
         `https://finnhub.io/api/v1/company-news?symbol=${sym}&from=${from}&to=${today}&token=${S.finnhubKey}`
       );
       if (res.ok) {
         const arr = await res.json();
-        if (arr && arr.length) {
-          return arr.slice(0,8).map(n => ({
-            title:   n.headline || '',
-            link:    n.url || '#',
-            publisher: n.source || '',
-            summary: n.summary || '',
-            sentiment: n.sentiment || null,
-            providerPublishTime: n.datetime || null,
-          }));
-        }
+        if (arr?.length) return arr.slice(0,8).map(n=>({
+          title:   n.headline||'',
+          link:    n.url||'#',
+          publisher: n.source||'',
+          summary: n.summary||'',
+          providerPublishTime: n.datetime||null,
+        }));
       }
     } catch {}
   }
-
-  // 2. Fallback: RSS via rss2json (no key needed)
+  // RSS fallback (no key needed)
   try {
-    const rssUrl = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}&region=US&lang=en-US`;
-    const apiUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=6`;
-    const res = await fetch(apiUrl);
+    const rss = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}&region=US&lang=en-US`;
+    const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=6`);
     if (res.ok) {
       const d = await res.json();
-      return (d.items || []).map(n => ({
-        title: n.title || '',
-        link:  n.link  || '#',
-        publisher: n.author || 'Yahoo Finance',
-        providerPublishTime: n.pubDate ? Math.floor(new Date(n.pubDate).getTime()/1000) : null,
+      return (d.items||[]).map(n=>({
+        title:   n.title||'',
+        link:    n.link||'#',
+        publisher: n.author||'Yahoo Finance',
+        providerPublishTime: n.pubDate?Math.floor(new Date(n.pubDate).getTime()/1000):null,
       }));
     }
   } catch {}
   return [];
 }
 
-async function getFmpIndices() {
-  // Use Twelve Data for SPY/QQQ/DIA as index proxies
-  const d = await tdApi('/quote', { symbol: 'SPY,QQQ,DIA' });
-  const arr = Array.isArray(d) ? d : [d];
-  const labels = { SPY: 'S&P 500', QQQ: 'Nasdaq', DIA: 'Dow Jones' };
-  return arr.filter(x => x?.symbol).map(x => ({
-    symbol: x.symbol,
-    label: labels[x.symbol] || x.symbol,
-    price: parseFloat(x.close || 0),
-    pct: parseFloat(x.percent_change || 0),
-  }));
+// ── Finnhub general market news ──
+async function getMarketNews() {
+  if (S.finnhubKey) {
+    try {
+      const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${S.finnhubKey}`);
+      if (res.ok) {
+        const d = await res.json();
+        return (d||[]).slice(0,4).map(n=>({
+          title:   n.headline||'',
+          link:    n.url||'#',
+          publisher: n.source||'',
+          providerPublishTime: n.datetime||null,
+        }));
+      }
+    } catch {}
+  }
+  // RSS fallback
+  try {
+    const rss = 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US';
+    const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=4`);
+    if (res.ok) { const d=await res.json(); return (d.items||[]).map(n=>({title:n.title||'',link:n.link||'#',publisher:'Yahoo Finance',providerPublishTime:n.pubDate?Math.floor(new Date(n.pubDate).getTime()/1000):null})); }
+  } catch {}
+  return [];
 }
 
 // Keep for backward compat (Claude API)
@@ -1038,7 +1030,7 @@ async function clFetch(prompt, system = '') {
   return d.content?.[0]?.text || '';
 }
 
-function normQuote(q) {
+function normQuote(q) { if(q && q.ticker) return q; // already normalized
   if (!q) return { ticker:'', name:'', price:0, change:0, pct:0, high:0, low:0, high52:0, low52:0, volume:0, mktCap:null, pe:null, beta:null, marketState:'CLOSED', preMarket:null, postMarket:null };
   // Yahoo Finance format
   const price  = parseFloat(q.price || q.regularMarketPrice || q.close || 0);
@@ -1188,6 +1180,32 @@ const INVEST_STOCKS = ['AAPL','MSFT','AMZN','GOOGL','BRK.B','JNJ','V','JPM'];
 const SA_STOCKS     = ['2222.SR','1120.SR','2010.SR','1010.SR','2380.SR'];
 
 
+
+function applyMarketStatus(data) {
+  if (!data) return;
+  const dot = document.getElementById('mktDot');
+  const lbl = document.getElementById('mktLabel');
+  if (!dot || !lbl) return;
+  const pct = data.pct || 0;
+  if (pct > 0.5) {
+    dot.style.background = 'var(--green)';
+    dot.style.boxShadow = '0 0 0 3px rgba(22,163,74,.15)';
+    lbl.textContent = '🟢 سوق صاعد';
+    lbl.style.color = 'var(--green)';
+  } else if (pct < -0.5) {
+    dot.style.background = 'var(--red)';
+    dot.style.boxShadow = '0 0 0 3px rgba(220,38,38,.15)';
+    lbl.textContent = '🔴 سوق هابط';
+    lbl.style.color = 'var(--red)';
+  } else {
+    dot.style.background = 'var(--amber)';
+    dot.style.boxShadow = '0 0 0 3px rgba(217,119,6,.15)';
+    lbl.textContent = '🟡 سوق محايد';
+    lbl.style.color = 'var(--amber)';
+  }
+  if (data.tickerData) startMarketTicker(data.tickerData);
+}
+
 // Rotating market ticker
 let _tickerInterval = null;
 function startMarketTicker(data) {
@@ -1277,9 +1295,9 @@ function renderHome() {
   `;
 
   loadMarketStatus();
-  setTimeout(() => loadIdeas(false), 800);
-  setTimeout(() => loadNewsHome(), 400);
-  setTimeout(() => loadWLPreview(), 1200);
+  setTimeout(() => loadNewsHome(),  600);
+  setTimeout(() => loadIdeas(false), 1200);
+  setTimeout(() => loadWLPreview(), 2000);
 }
 
 function setStyle(s) {
@@ -1290,56 +1308,29 @@ function setStyle(s) {
 
 // Market Status
 async function loadMarketStatus() {
+  // 30-min cache
+  const cached = ls('tt_mkt_cache',null);
+  if (cached && Date.now()-ls('tt_mkt_ts',0) < 30*60*1000) { applyMarketStatus(cached); return; }
   try {
-    // Get market indices
-    // Use SPY only to save API credits (1 req)
-    const spyData = await yfQuote(['SPY']);
-    const arr = spyData;
-    if (!arr.length) throw new Error('no data');
-    const spy = arr[0] || {};
-    if (!spy) return;
-    const q = normQuote(spy);
-    const dot = document.getElementById('mktDot');
-    const lbl = document.getElementById('mktLabel');
-    const idx = document.getElementById('mktIndices');
-    if (!dot) return;
-
-    let cls, label;
-    const spyPct = spy.pct !== undefined ? spy.pct : normQuote(spy).pct;
-    if (spyPct > 0.5)       { cls = 'bull'; label = '🟢 سوق صاعد (Bull Market)'; }
-    else if (spyPct < -0.5) { cls = 'bear'; label = '🔴 سوق هابط (Bear Market)'; }
-    else                   { cls = 'neutral'; label = '🟡 سوق محايد (Neutral)'; }
-
-    dot.className = `status-dot ${cls}`;
-    lbl.className = `status-label ${cls}`;
-    lbl.textContent = label;
-
-    // Build rotating ticker data
-    const tickerData = arr.map(q => {
-      const n = normQuote(q);
-      const labels = { SPY: 'S&P 500', QQQ: 'Nasdaq', DIA: 'Dow Jones' };
-      return { label: labels[q.symbol] || q.symbol, pct: n.pct, price: n.price };
-    });
-    // Start rotating
-    startMarketTicker(tickerData);
+    const arr = await yfQuote(['SPY']);
+    const spy = arr[0];
+    if (!spy) throw new Error('no data');
+    const data = { pct: spy.pct, price: spy.price, tickerData:[{label:'S&P 500',pct:spy.pct,price:spy.price}] };
+    lss('tt_mkt_cache', data); lss('tt_mkt_ts', Date.now());
+    applyMarketStatus(data);
   } catch(e) {
-    const lbl = document.getElementById('mktLabel');
-    const dot = document.getElementById('mktDot');
-    const idx = document.getElementById('mktIndices');
-    if (lbl) lbl.textContent = !S.tdKey ? 'أضف Twelve Data API Key من الإعدادات ⚙️' : 'تعذّر تحميل بيانات السوق';
-    if (dot) dot.className = 'status-dot neutral';
-    if (idx) idx.innerHTML = '';
+    const lbl=document.getElementById('mktLabel');
+    if (lbl) { lbl.textContent = !S.tdKey?'أضف API Key من الإعدادات ⚙️':'تعذّر جلب بيانات السوق'; lbl.style.color='var(--text3)'; }
   }
 }
 
-// Ideas
 async function loadIdeas(force = false) {
   const box = document.getElementById('ideasList');
   if (!box) return;
 
   const cached = ls('tt_ideas_' + S.style, null);
   const cacheAge = ls('tt_ideas_ts_' + S.style, 0);
-  if (!force && cached && Date.now() - cacheAge < 30 * 60 * 1000) {
+  if (!force && cached && Date.now() - cacheAge < 60 * 60 * 1000) {
     renderIdeas(cached);
     return;
   }
@@ -1396,50 +1387,22 @@ async function loadNewsHome() {
   const box = document.getElementById('newsList');
   if (!box) return;
   try {
-    let arr = [];
-
-    // Try Finnhub market news first
-    if (S.finnhubKey) {
-      try {
-        const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${S.finnhubKey}`);
-        if (res.ok) {
-          const d = await res.json();
-          arr = (d || []).slice(0,4).map(n => ({
-            title: n.headline || '',
-            link:  n.url || '#',
-            publisher: n.source || '',
-            providerPublishTime: n.datetime || null,
-          }));
-        }
-      } catch {}
-    }
-
-    // Fallback to RSS
-    if (!arr.length) {
-      const rssUrl = 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY,NVDA,AAPL&region=US&lang=en-US';
-      const rssApi = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=4`;
-      const rssRes = await fetch(rssApi);
-      const rssData = await rssRes.json();
-      arr = (rssData.items || []).map(n => ({
-        title: n.title || '',
-        link:  n.link  || '#',
-        publisher: n.author || 'Yahoo Finance',
-        providerPublishTime: n.pubDate ? Math.floor(new Date(n.pubDate).getTime()/1000) : null,
-      }));
-    }
-    if (!arr || !arr.length) throw new Error('لا توجد أخبار');
-    box.innerHTML = arr.slice(0,3).map(n => `
-      <div class="news-item" onclick="window.open(n.link||'#','_blank')">
+    const arr = await getMarketNews();
+    if (!arr.length) throw new Error('لا أخبار');
+    box.innerHTML = arr.map(n => {
+      const ts = n.providerPublishTime ? new Date(n.providerPublishTime*1000) : null;
+      const t  = ts ? ts.toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '';
+      return `<div class="news-item" onclick="window.open('${n.link}','_blank')">
         <div class="news-dot"></div>
-        <div class="news-text">${n.title||''}</div>
-        <div class="news-time">${n.providerPublishTime ? new Date(n.providerPublishTime*1000).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : (n.published_at ? new Date(n.published_at).toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'}) : '')}</div>
-      </div>`).join('');
+        <div class="news-text">${n.title}</div>
+        <div class="news-time">${t}</div>
+      </div>`;
+    }).join('');
   } catch {
-    box.innerHTML = `<div class="news-item"><div class="news-dot"></div><div class="news-text" style="color:var(--text3)">تعذّر تحميل الأخبار — حاول مرة أخرى</div></div>`;
+    box.innerHTML = `<div class="news-item"><div class="news-dot"></div><div class="news-text" style="color:var(--text3)">أضف Finnhub Key للأخبار</div></div>`;
   }
 }
 
-// Watchlist Preview
 async function loadWLPreview() {
   const box = document.getElementById('wlPreview');
   if (!box || !S.watchlist.length) {
@@ -1478,10 +1441,8 @@ async function renderStock() {
 
   try {
     // Fetch quote + stats in parallel
-    const [quotes, sd] = await Promise.all([
-      yfQuote([ticker]),
-      yfStats(ticker).catch(() => ({}))
-    ]);
+    const quotes = await yfQuote([ticker]);
+    const sd = {};
     const qd = quotes[0] || {};
     const q  = normQuote(qd);
     const val = sd.summaryDetail || sd.defaultKeyStatistics || {};
@@ -1700,18 +1661,46 @@ function switchStockTab(tab) {
         ${scoreBarHTML('كفاءة رأس المال', Math.round(45 + Math.random() * 45))}
         ${scoreBarHTML('الميزانية العمومية', Math.round(50 + Math.random() * 40))}
       </div>
-      <div class="stat-grid" style="margin-top:10px">
-        <div class="stat-item"><div class="stat-label">P/E</div><div class="stat-value">${val.trailingPE?.raw?parseFloat(val.trailingPE.raw).toFixed(1):'—'}</div></div>
-        <div class="stat-item"><div class="stat-label">EPS</div><div class="stat-value">${val.trailingEps?.raw?'$'+parseFloat(val.trailingEps.raw).toFixed(2):'—'}</div></div>
-        <div class="stat-item"><div class="stat-label">P/B</div><div class="stat-value">${val.priceToBook?.raw?parseFloat(val.priceToBook.raw).toFixed(2):'—'}</div></div>
-        <div class="stat-item"><div class="stat-label">D/E Ratio</div><div class="stat-value">${fin.debtToEquity?.raw?parseFloat(fin.debtToEquity.raw).toFixed(2):'—'}</div></div>
-        <div class="stat-item"><div class="stat-label">ROE</div><div class="stat-value">${fin.returnOnEquity?.raw?(fin.returnOnEquity.raw*100).toFixed(1)+'%':'—'}</div></div>
-        <div class="stat-item"><div class="stat-label">Div Yield</div><div class="stat-value">${val.dividendYield?.raw?(val.dividendYield.raw*100).toFixed(2)+'%':'—'}</div></div>
+      <div class="ai-insight" style="margin-top:10px" id="finAI">
+        <div class="ai-insight-label"><i class="ti ti-robot"></i> تحليل مالي بـ AI</div>
+        <div class="ai-insight-text">
+          <div class="loading-text" style="padding:4px"><div class="spinner"></div> جاري التحليل المالي...</div>
+        </div>
+      </div>
+      <div style="text-align:center;padding:12px;background:var(--bg);border-radius:var(--radius-sm);margin-top:8px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">البيانات المالية الدقيقة</div>
+        <div style="font-size:12px;color:var(--text2)">تتوفر مع الاشتراك في Twelve Data</div>
+        <div style="font-size:11px;color:var(--primary);margin-top:4px">twelvedata.com</div>
       </div>`;
+    loadFinancialAI(q.ticker, q.price, q.pct);
 
   } else if (tab === 'news') {
     box.innerHTML = `<div id="stockNewsList"><div class="loading-text"><div class="spinner"></div> جاري تحميل الأخبار...</div></div>`;
     loadStockNews(q.ticker);
+  }
+}
+
+
+async function loadFinancialAI(ticker, price, pct) {
+  const box = document.getElementById('finAI');
+  if (!box) return;
+  if (!S.clKey) {
+    box.querySelector('.ai-insight-text').innerHTML = '<span style="color:var(--text3);font-size:12px">أضف Claude API Key للتحليل المالي الذكي</span>';
+    return;
+  }
+  try {
+    const res = await clFetch(
+      `قدّم تحليلاً مالياً موجزاً لسهم ${ticker} بسعر حالي $${price} وتغيير ${pct.toFixed(2)}% اليوم.
+
+اذكر في جملتين فقط:
+1. التقييم العام (غالي/رخيص/عادل)
+2. أهم نقطة مالية يجب مراقبتها`
+    );
+    const el = box.querySelector('.ai-insight-text');
+    if (el) el.innerHTML = res;
+  } catch(e) {
+    const el = box.querySelector('.ai-insight-text');
+    if (el) el.innerHTML = `<span style="color:var(--text3);font-size:12px">${e.message}</span>`;
   }
 }
 
