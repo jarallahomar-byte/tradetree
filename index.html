@@ -47,16 +47,19 @@
 }
 
 [data-theme="dark"] {
-  --bg:     #111111;
-  --card:   #1C1C1C;
-  --border: #2A2A2A;
-  --border2:#252525;
-  --text:   #F5F5F5;
-  --text2:  #A0A0A0;
-  --text3:  #555555;
-  --primary-bg: rgba(22,163,74,.1);
-  --shadow: 0 1px 3px rgba(0,0,0,.3);
-  --shadow-md: 0 4px 12px rgba(0,0,0,.4);
+  --bg:         #0F1A16;
+  --card:       #1A2820;
+  --border:     #2A3D33;
+  --border2:    #223029;
+  --text:       #F0F4F1;
+  --text2:      #9AB5A0;
+  --text3:      #4A6B55;
+  --primary-bg: rgba(22,163,74,.12);
+  --green-light:rgba(22,163,74,.15);
+  --red-light:  rgba(220,38,38,.15);
+  --amber-light:rgba(217,119,6,.15);
+  --shadow:     0 1px 3px rgba(0,0,0,.4);
+  --shadow-md:  0 4px 12px rgba(0,0,0,.5);
 }
 
 /* ══════════════════════════════════════════
@@ -783,6 +786,10 @@ a { text-decoration: none; color: inherit; }
 /* ══════════════════════════════════════════
    RESPONSIVE
 ══════════════════════════════════════════ */
+@keyframes tickerMove {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
 @media (min-width: 480px) {
   #app { box-shadow: 0 0 40px rgba(0,0,0,.08); }
   #bottomNav { border-radius: 0; }
@@ -793,7 +800,7 @@ a { text-decoration: none; color: inherit; }
 <div id="app">
   <!-- Top Nav -->
   <nav id="topNav">
-    <div class="nav-logo" id="navLogo">🌳<span>TradeTree</span></div>
+    <div class="nav-logo" id="navLogo" onclick="nav('home')" style="cursor:pointer">🌳<span>TradeTree</span></div>
     <div class="nav-spacer"></div>
     <div class="market-pill" id="marketPill">
       <button id="mktBtnUS" onclick="setMarket('us')">🇺🇸 أمريكي</button>
@@ -840,6 +847,7 @@ const S = {
   page:    'home',
   market:  ls('tt_market', 'us'),
   theme:   ls('tt_theme',  'light'),
+  lang:    ls('tt_lang',   'ar'),
   style:   ls('tt_style',  'swing'),  // scalp | swing | invest
   tdKey:      ls('tt_tdkey',   ''),
   finnhubKey: ls('tt_finnhub', ''),
@@ -1225,11 +1233,12 @@ function fmtLarge(n) {
 }
 
 function rangeBarHTML(low, high, cur, cls) {
-  const pct = high > low ? Math.max(0, Math.min(100, ((cur - low) / (high - low)) * 100)) : 50;
+  if (!low || !high || low >= high) return '<div class="range-bar-wrap"><div class="range-bar-fill ' + cls + '" style="width:50%"></div></div>';
+  const pct = Math.max(2, Math.min(98, ((cur - low) / (high - low)) * 100));
   return `
-    <div class="range-bar-wrap">
+    <div class="range-bar-wrap" dir="ltr">
       <div class="range-bar-fill ${cls}" style="width:${pct}%"></div>
-      <div class="range-dot ${cls}" style="right:${100 - pct}%"></div>
+      <div class="range-dot ${cls}" style="left:${pct}%;transform:translate(-50%,-50%)"></div>
     </div>`;
 }
 
@@ -1282,21 +1291,47 @@ function applyMarketStatus(data) {
   if (data.tickerData) startMarketTicker(data.tickerData);
 }
 
-// Rotating market ticker
+// Scrolling market ticker — fetches all 3 indices
 let _tickerInterval = null;
+
+async function loadFullTicker() {
+  if (!S.finnhubKey && !S.tdKey) return;
+  try {
+    const syms = ['SPY','QQQ','DIA'];
+    const arr = await yfQuote(syms);
+    const labels = { SPY:'S&P 500', QQQ:'Nasdaq', DIA:'Dow Jones' };
+    const items = arr.map(q => ({
+      label: labels[q.ticker]||q.ticker,
+      pct: q.pct,
+      price: q.price
+    }));
+    lss('tt_mkt_cache', { pct: items[0]?.pct||0, price: items[0]?.price||0, tickerData: items });
+    lss('tt_mkt_ts', Date.now());
+    applyMarketStatus({ pct: items[0]?.pct||0, tickerData: items });
+    startMarketTicker(items);
+  } catch {}
+}
+
 function startMarketTicker(data) {
   if (!data || !data.length) return;
-  const inner = document.getElementById('mktTickerInner');
-  if (!inner) return;
+  const wrap = document.getElementById('mktTicker');
+  if (!wrap) return;
   clearInterval(_tickerInterval);
-  let idx = 0;
-  function show() {
-    const d = data[idx % data.length];
-    inner.innerHTML = `<span style="font-family:var(--font-en);font-weight:600">${d.label}</span> <span style="font-weight:700;color:${d.pct>=0?'var(--green)':'var(--red)'}">${fmtPct(d.pct)}</span> <span style="color:var(--text3)">$${d.price.toFixed(2)}</span>`;
-    idx++;
-  }
-  show();
-  _tickerInterval = setInterval(show, 3000);
+
+  // Build scrolling text
+  const text = data.map(d =>
+    `<span style="font-family:var(--font-en);font-weight:600;margin-left:6px">${d.label}</span>` +
+    `<span style="font-weight:800;color:${d.pct>=0?'var(--green)':'var(--red)'}"> ${d.pct>=0?'▲':'▼'} ${Math.abs(d.pct).toFixed(2)}%</span>` +
+    `<span style="color:var(--text3);font-family:var(--font-en)"> $${d.price.toFixed(2)}</span>` +
+    `<span style="color:var(--border);margin:0 12px">|</span>`
+  ).join('');
+
+  wrap.innerHTML = `
+    <div style="overflow:hidden;white-space:nowrap;width:100%">
+      <div id="tickerScroll" style="display:inline-block;animation:tickerMove 20s linear infinite;font-size:11px">
+        ${text}${text}
+      </div>
+    </div>`;
 }
 
 function renderHome() {
@@ -1322,8 +1357,11 @@ function renderHome() {
     <!-- Search -->
     <div class="search-wrap">
       <i class="ti ti-search icon"></i>
-      <input id="searchInput" type="text" placeholder="ابحث عن سهم... AAPL, NVDA, 2222.SR"
-        onkeydown="if(event.key==='Enter'){const v=this.value.trim().toUpperCase();if(v)openStock(v);}">
+      <input id="searchInput" type="text" placeholder="ابحث عن سهم... AAPL, NVDA"
+        autocomplete="off"
+        oninput="searchAutocomplete(this.value)"
+        onkeydown="if(event.key==='Enter'){const v=this.value.trim().toUpperCase();if(v){document.getElementById('searchDropdown').style.display='none';openStock(v);}if(event.key==='Escape')document.getElementById('searchDropdown').style.display='none'">
+      <div id="searchDropdown" style="display:none;position:absolute;top:calc(100% + 4px);right:0;left:0;background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);z-index:200;max-height:200px;overflow-y:auto"></div>
       <button class="search-btn" onclick="const v=document.getElementById('searchInput').value.trim().toUpperCase();if(v)openStock(v);">تحليل</button>
     </div>
 
@@ -1371,9 +1409,36 @@ function renderHome() {
   `;
 
   loadMarketStatus();
+  setTimeout(() => loadFullTicker(), 2000);
   setTimeout(() => loadNewsHome(),  600);
   setTimeout(() => loadIdeas(false), 1200);
   setTimeout(() => loadWLPreview(), 2000);
+}
+
+
+let _searchTimer = null;
+async function searchAutocomplete(q) {
+  const drop = document.getElementById('searchDropdown');
+  if (!drop) return;
+  if (!q || q.length < 1) { drop.style.display='none'; return; }
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(async () => {
+    if (!S.finnhubKey) return;
+    try {
+      const res = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${S.finnhubKey}`);
+      const d = await res.json();
+      const results = (d.result||[]).filter(r=>r.type==='Common Stock').slice(0,6);
+      if (!results.length) { drop.style.display='none'; return; }
+      drop.style.display = 'block';
+      drop.innerHTML = results.map(r => `
+        <div onclick="document.getElementById('searchInput').value='${r.symbol}';document.getElementById('searchDropdown').style.display='none';openStock('${r.symbol}')"
+          style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border2)"
+          onmouseover="this.style.background='var(--primary-bg)'" onmouseout="this.style.background=''">
+          <span style="font-weight:800;font-family:var(--font-en);color:var(--primary);min-width:50px">${r.symbol}</span>
+          <span style="font-size:12px;color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.description||''}</span>
+        </div>`).join('');
+    } catch { drop.style.display='none'; }
+  }, 300);
 }
 
 function setStyle(s) {
@@ -1538,12 +1603,20 @@ async function renderStock() {
     const finalScore = Math.round(techScore * .4 + finScore * .35 + newsScore * .25);
 
     // Trade setup
-    const entry  = (q.price * 0.998).toFixed(2);
-    const stop   = (q.price * (1 - 0.025)).toFixed(2);
-    const t1     = (q.price * 1.055).toFixed(2);
-    const t2     = (q.price * 1.10).toFixed(2);
-    const t3     = (q.price * 1.16).toFixed(2);
-    const rr     = (((t1 - entry) / (entry - stop))).toFixed(1);
+    // Targets based on trading style
+    const iScalp   = S.style === 'scalp';
+    const isInvest = S.style === 'invest';
+    const stopPct  = iScalp ? 0.012 : isInvest ? 0.06 : 0.025;
+    const t1Pct    = iScalp ? 0.02  : isInvest ? 0.12 : 0.055;
+    const t2Pct    = iScalp ? 0.035 : isInvest ? 0.22 : 0.10;
+    const t3Pct    = iScalp ? 0.05  : isInvest ? 0.35 : 0.16;
+    const entry  = (q.price * 0.999).toFixed(2);
+    const stop   = (q.price * (1 - stopPct)).toFixed(2);
+    const t1     = (q.price * (1 + t1Pct)).toFixed(2);
+    const t2     = (q.price * (1 + t2Pct)).toFixed(2);
+    const t3     = (q.price * (1 + t3Pct)).toFixed(2);
+    const rr     = ((t1 - entry) / (entry - stop)).toFixed(1);
+    const styleLabel = iScalp ? '⚡ قصير' : isInvest ? '🏦 طويل' : '📈 متوسط';
 
     const pctClass = q.pct >= 0 ? 'up' : 'dn';
     const scoreC   = scoreClass(finalScore);
@@ -1581,18 +1654,26 @@ async function renderStock() {
 
         <!-- Day Range -->
         <div class="range-section">
-          <div class="range-label">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);font-weight:600;margin-bottom:5px">
             <span>نطاق اليوم</span>
-            <span style="font-family:var(--font-en)">${fmtPrice(q.low)} — ${fmtPrice(q.high)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-family:var(--font-en);margin-bottom:4px">
+            <span style="color:var(--red)">${fmtPrice(q.low)}</span>
+            <span style="color:var(--text3);font-size:10px">السعر الحالي ${fmtPrice(q.price)}</span>
+            <span style="color:var(--green)">${fmtPrice(q.high)}</span>
           </div>
           ${rangeBarHTML(q.low, q.high, q.price, 'day')}
         </div>
 
         <!-- 52W Range -->
         <div class="range-section" style="margin-bottom:0">
-          <div class="range-label">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);font-weight:600;margin-bottom:5px">
             <span>نطاق 52 أسبوع</span>
-            <span style="font-family:var(--font-en)">${fmtPrice(q.low52)} — ${fmtPrice(q.high52)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;font-family:var(--font-en);margin-bottom:4px">
+            <span style="color:var(--red)">${fmtPrice(q.low52)}</span>
+            <span style="color:var(--text3);font-size:10px">الآن</span>
+            <span style="color:var(--green)">${fmtPrice(q.high52)}</span>
           </div>
           ${rangeBarHTML(q.low52, q.high52, q.price, 'week52')}
         </div>
@@ -1673,18 +1754,18 @@ function switchStockTab(tab) {
       </div>
 
       <!-- Final Score -->
-      <div class="final-score">
-        <div class="final-score-num">${finalScore}</div>
-        <div class="final-score-info">
-          <div class="final-score-label">TRADETREE SCORE</div>
-          <div class="final-score-status">${finalScore>=75?'🟢 يستحق الدراسة':finalScore>=50?'🟡 تحتاج مراقبة':'🔴 تجنب حالياً'}</div>
-          <div class="final-score-meta">فني ${techScore} · مالي ${finScore} · أخبار ${newsScore}</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;align-items:center;gap:14px;margin-bottom:10px;box-shadow:var(--shadow)">
+        <div style="font-size:42px;font-weight:900;font-family:var(--font-en);line-height:1;color:${finalScore>=75?'var(--green)':finalScore>=50?'var(--amber)':'var(--red)'}">${finalScore}</div>
+        <div style="flex:1">
+          <div style="font-size:10px;color:var(--text3);font-weight:700;letter-spacing:.5px;margin-bottom:4px">TRADETREE SCORE</div>
+          <div style="font-size:14px;font-weight:700;color:${finalScore>=75?'var(--green)':finalScore>=50?'var(--amber)':'var(--red)'}">${finalScore>=75?'🟢 يستحق الدراسة':finalScore>=50?'🟡 يحتاج مراقبة':'🔴 تجنب حالياً'}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:3px">فني <b style="color:${scoreClass(techScore)==='high'?'var(--green)':scoreClass(techScore)==='mid'?'var(--amber)':'var(--red)'}">${techScore}</b> · مالي <b style="color:${scoreClass(finScore)==='high'?'var(--green)':scoreClass(finScore)==='mid'?'var(--amber)':'var(--red)'}">${finScore}</b> · أخبار <b style="color:${scoreClass(newsScore)==='high'?'var(--green)':scoreClass(newsScore)==='mid'?'var(--amber)':'var(--red)'}">${newsScore}</b></div>
         </div>
       </div>
 
       <!-- Trade Setup -->
       <div class="trade-setup">
-        <div class="setup-title"><i class="ti ti-target"></i> إعداد الصفقة</div>
+        <div class="setup-title"><i class="ti ti-target"></i> إعداد الصفقة <span style="font-size:11px;opacity:.7;margin-right:4px">${styleLabel}</span></div>
         <div class="setup-grid">
           <div class="setup-item">
             <div class="setup-key">🟢 منطقة الشراء</div>
@@ -1762,6 +1843,30 @@ function switchStockTab(tab) {
   }
 }
 
+
+
+async function translateNews(idx, title, summary) {
+  const btn = event.target.closest('button');
+  if (!btn) return;
+  const titleEl = document.getElementById('newsTitle_' + idx);
+  if (!titleEl) return;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:12px;height:12px;margin:0 auto"></div>';
+  try {
+    const res = await clFetch(
+      'ترجم هذا العنوان الإخباري للعربية بدقة واختصار:\n' + title +
+      (summary ? ('\n\nوهذا ملخص مختصر:\n' + summary) : '') +
+      '\n\nأعطني فقط:\n1. العنوان بالعربية\n2. جملة ملخص واحدة بالعربية'
+    );
+    titleEl.innerHTML = res.split('\n').join('<br>');
+
+    btn.innerHTML = '<i class="ti ti-check" style="font-size:11px"></i> تمت';
+    btn.disabled = true;
+  } catch(e) {
+    btn.innerHTML = '<i class="ti ti-language" style="font-size:11px"></i> ترجمة';
+    btn.disabled = false;
+  }
+}
 
 async function loadFinancialAI(ticker, price, pct) {
   const box = document.getElementById('finAI');
@@ -2321,10 +2426,16 @@ function renderSettings() {
     </div>
 
     <div class="card" style="margin-bottom:10px">
-      <div class="card-title"><i class="ti ti-palette"></i> المظهر</div>
-      <div style="display:flex;gap:8px">
+      <div class="card-title"><i class="ti ti-palette"></i> المظهر واللغة</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">الوضع</div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn ${S.theme==='light'?'btn-primary':'btn-outline'}" style="flex:1" onclick="setTheme('light')"><i class="ti ti-sun"></i> فاتح</button>
         <button class="btn ${S.theme==='dark'?'btn-primary':'btn-outline'}" style="flex:1" onclick="setTheme('dark')"><i class="ti ti-moon"></i> داكن</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">اللغة</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn ${S.lang==='ar'?'btn-primary':'btn-outline'}" style="flex:1" onclick="setLang('ar')">🇸🇦 العربية</button>
+        <button class="btn ${S.lang==='en'?'btn-primary':'btn-outline'}" style="flex:1" onclick="setLang('en')">🇺🇸 English</button>
       </div>
     </div>
 
@@ -2349,6 +2460,14 @@ function saveSettings() {
   showToast('تم حفظ المفاتيح ✓');
 }
 
+function setLang(l) {
+  S.lang = l;
+  lss('tt_lang', l);
+  document.documentElement.setAttribute('lang', l);
+  document.documentElement.setAttribute('dir', l==='ar'?'rtl':'ltr');
+  renderSettings();
+}
+
 function setTheme(t) {
   S.theme = t;
   lss('tt_theme', t);
@@ -2361,6 +2480,8 @@ function setTheme(t) {
 // ══════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   applyTheme();
+  document.documentElement.setAttribute('lang', S.lang||'ar');
+  document.documentElement.setAttribute('dir', (S.lang||'ar')==='ar'?'rtl':'ltr');
 
   // Sync market pill
   const btns = document.querySelectorAll('#marketPill button');
