@@ -917,17 +917,93 @@ function tdNorm(q) {
   };
 }
 
-// ── Single batch quote call ──
+// ── Quotes: Finnhub primary, Twelve Data fallback ──
 async function yfQuote(symbols) {
   const syms = (Array.isArray(symbols)?symbols:[symbols]).filter(Boolean);
   if (!syms.length) return [];
-  const d = await tdFetch('/quote', {symbol: syms.join(',')});
-  const arr = Array.isArray(d) ? d : [d];
-  return arr.map(tdNorm).filter(Boolean);
+
+  // Try Finnhub first (same key as news, 60 req/min free)
+  if (S.finnhubKey) {
+    try {
+      const results = await Promise.all(syms.map(async sym => {
+        const [q, p] = await Promise.all([
+          fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${S.finnhubKey}`).then(r=>r.json()),
+          fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${sym}&token=${S.finnhubKey}`).then(r=>r.json()).catch(()=>({}))
+        ]);
+        if (!q || !q.c) return null;
+        return {
+          ticker:   sym,
+          name:     p.name || sym,
+          price:    q.c  || 0,
+          change:   q.d  || 0,
+          pct:      q.dp || 0,
+          high:     q.h  || 0,
+          low:      q.l  || 0,
+          high52:   q.h  || 0,
+          low52:    q.l  || 0,
+          open:     q.o  || 0,
+          prevClose:q.pc || 0,
+          volume:   0,
+          mktCap:   p.marketCapitalization ? p.marketCapitalization*1e6 : null,
+          pe:       p.pe || null,
+          beta:     null,
+          exchange: p.exchange || '',
+          currency: p.currency || 'USD',
+          marketOpen: true,
+          logo:     p.logo || '',
+          industry: p.finnhubIndustry || '',
+          country:  p.country || '',
+        };
+      }));
+      const valid = results.filter(Boolean);
+      if (valid.length) return valid;
+    } catch {}
+  }
+
+  // Fallback: Twelve Data
+  if (S.tdKey) {
+    try {
+      const d = await tdFetch('/quote', {symbol: syms.join(',')});
+      const arr = Array.isArray(d) ? d : [d];
+      return arr.map(tdNorm).filter(Boolean);
+    } catch {}
+  }
+
+  throw new Error('أضف Finnhub API Key من الإعدادات ⚙️');
 }
 
-// ── Stats disabled (needs paid plan) — Claude handles financials ──
-async function yfStats(symbol) { return {}; }
+// ── Stats: Finnhub basic metrics ──
+async function yfStats(symbol) {
+  if (!S.finnhubKey) return {};
+  try {
+    const [metrics, profile] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${S.finnhubKey}`).then(r=>r.json()),
+      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${S.finnhubKey}`).then(r=>r.json()).catch(()=>({}))
+    ]);
+    const m = metrics.metric || {};
+    return {
+      summaryDetail: {
+        trailingPE:    { raw: m['peInclExtraTTM'] || m['peTTM'] || null },
+        dividendYield: { raw: m['dividendYieldIndicatedAnnual'] || null },
+        beta:          { raw: m['beta'] || null },
+      },
+      defaultKeyStatistics: {
+        trailingEps:  { raw: m['epsTTM'] || null },
+        priceToBook:  { raw: m['pbAnnual'] || null },
+        forwardPE:    { raw: m['forwardPE'] || null },
+      },
+      financialData: {
+        debtToEquity:   { raw: m['totalDebt/totalEquityAnnual'] || null },
+        returnOnEquity: { raw: m['roeRfy'] ? m['roeRfy']/100 : null },
+        grossMargins:   { raw: m['grossMarginTTM'] ? m['grossMarginTTM']/100 : null },
+        currentRatio:   { raw: m['currentRatioAnnual'] || null },
+        revenueGrowth:  { raw: m['revenueGrowthTTMYoy'] ? m['revenueGrowthTTMYoy']/100 : null },
+      },
+      _profile: profile,
+      _metrics: m,
+    };
+  } catch { return {}; }
+}
 
 // ── News: Finnhub first, RSS fallback ──
 async function yfNews(symbol) {
@@ -1030,7 +1106,7 @@ async function clFetch(prompt, system = '') {
   return d.content?.[0]?.text || '';
 }
 
-function normQuote(q) { if(q && q.ticker) return q; // already normalized
+function normQuote(q) { if(q && (q.ticker||q.symbol)) { if(q.ticker) return q; q.ticker=q.symbol; return q; } // normalize
   if (!q) return { ticker:'', name:'', price:0, change:0, pct:0, high:0, low:0, high52:0, low52:0, volume:0, mktCap:null, pe:null, beta:null, marketState:'CLOSED', preMarket:null, postMarket:null };
   // Yahoo Finance format
   const price  = parseFloat(q.price || q.regularMarketPrice || q.close || 0);
@@ -1441,8 +1517,10 @@ async function renderStock() {
 
   try {
     // Fetch quote + stats in parallel
-    const quotes = await yfQuote([ticker]);
-    const sd = {};
+    const [quotes, sd] = await Promise.all([
+      yfQuote([ticker]),
+      yfStats(ticker).catch(()=>({}))
+    ]);
     const qd = quotes[0] || {};
     const q  = normQuote(qd);
     const val = sd.summaryDetail || sd.defaultKeyStatistics || {};
@@ -1481,6 +1559,7 @@ async function renderStock() {
           <div>
             <div class="stock-ticker-big">${q.ticker}</div>
             <div class="stock-company">${q.name || q.ticker}</div>
+            ${q.industry ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${q.industry}${q.country?' · '+q.country:''}</div>` : ''}
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <div class="tt-score-circle">
@@ -1667,10 +1746,13 @@ function switchStockTab(tab) {
           <div class="loading-text" style="padding:4px"><div class="spinner"></div> جاري التحليل المالي...</div>
         </div>
       </div>
-      <div style="text-align:center;padding:12px;background:var(--bg);border-radius:var(--radius-sm);margin-top:8px;border:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">البيانات المالية الدقيقة</div>
-        <div style="font-size:12px;color:var(--text2)">تتوفر مع الاشتراك في Twelve Data</div>
-        <div style="font-size:11px;color:var(--primary);margin-top:4px">twelvedata.com</div>
+      <div class="stat-grid" style="margin-top:10px">
+        <div class="stat-item"><div class="stat-label">P/E Ratio</div><div class="stat-value">${val.trailingPE?.raw?parseFloat(val.trailingPE.raw).toFixed(1):'—'}</div></div>
+        <div class="stat-item"><div class="stat-label">EPS TTM</div><div class="stat-value">${val.trailingEps?.raw?'$'+parseFloat(val.trailingEps.raw).toFixed(2):'—'}</div></div>
+        <div class="stat-item"><div class="stat-label">P/B</div><div class="stat-value">${val.priceToBook?.raw?parseFloat(val.priceToBook.raw).toFixed(2):'—'}</div></div>
+        <div class="stat-item"><div class="stat-label">Beta</div><div class="stat-value">${val.beta?.raw?parseFloat(val.beta.raw).toFixed(2):'—'}</div></div>
+        <div class="stat-item"><div class="stat-label">ROE</div><div class="stat-value">${fin.returnOnEquity?.raw?(fin.returnOnEquity.raw*100).toFixed(1)+'%':'—'}</div></div>
+        <div class="stat-item"><div class="stat-label">نمو الإيرادات</div><div class="stat-value">${fin.revenueGrowth?.raw?(fin.revenueGrowth.raw*100).toFixed(1)+'%':'—'}</div></div>
       </div>`;
     loadFinancialAI(q.ticker, q.price, q.pct);
 
