@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ar" dir="rtl" data-theme="light">
 <head>
@@ -840,7 +841,7 @@ a { text-decoration: none; color: inherit; }
 <script>
 'use strict';
 const WORKER_URL='https://tradetree-api.jarallah-omar.workers.dev';
-async function workerGet(p,params={}){const q=new URLSearchParams(params).toString();const r=await fetch(WORKER_URL+p+(q?'?'+q:''));if(!r.ok)throw new Error('خطأ');return r.json();}
+async function workerGet(p,params={}){const q=new URLSearchParams(params).toString();const r=await fetch(WORKER_URL+p+(q?'?'+q:''));if(!r.ok)throw new Error('خطأ في الخادم');return r.json();}
 
 // ══════════════════════════════════════════
 // STATE
@@ -934,185 +935,60 @@ function tdNorm(q) {
   };
 }
 
-// ── Quotes: Finnhub primary, Twelve Data fallback ──
+// ── Quotes via Worker (no API key needed) ──
 async function yfQuote(symbols) {
-  const syms = (Array.isArray(symbols)?symbols:[symbols]).filter(Boolean);
-  if (!syms.length) return [];
-
-  // Try Finnhub first (same key as news, 60 req/min free)
-  if (S.finnhubKey) {
-    try {
-      const results = await Promise.all(syms.map(async sym => {
-        // Validate key before using
-      const fhKey = S.finnhubKey || ls('tt_finnhub','');
-      if (!fhKey || fhKey.length < 8 || fhKey.startsWith('http')) {
-        throw new Error('مفتاح Finnhub غير صحيح — تأكد من الإعدادات');
-      }
-      const [q, p] = await Promise.all([
-          fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${fhKey}`).then(r=>r.json()),
-          fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${sym}&token=${fhKey}`).then(r=>r.json()).catch(()=>({}))
-        ]);
-        if (!q || !q.c) return null;
-        return {
-          ticker:   sym,
-          name:     p.name || sym,
-          price:    q.c  || 0,
-          change:   q.d  || 0,
-          pct:      q.dp || 0,
-          high:     q.h  || 0,
-          low:      q.l  || 0,
-          high52:   q.h  || 0,
-          low52:    q.l  || 0,
-          open:     q.o  || 0,
-          prevClose:q.pc || 0,
-          volume:   0,
-          mktCap:   p.marketCapitalization ? p.marketCapitalization*1e6 : null,
-          pe:       p.pe || null,
-          beta:     null,
-          exchange: p.exchange || '',
-          currency: p.currency || 'USD',
-          marketOpen: true,
-          logo:     p.logo || '',
-          industry: p.finnhubIndustry || '',
-          country:  p.country || '',
-        };
-      }));
-      const valid = results.filter(Boolean);
-      if (valid.length) return valid;
-    } catch {}
-  }
-
-  // Fallback: Twelve Data
-  if (S.tdKey) {
-    try {
-      const d = await tdFetch('/quote', {symbol: syms.join(',')});
-      const arr = Array.isArray(d) ? d : [d];
-      return arr.map(tdNorm).filter(Boolean);
-    } catch {}
-  }
-
-  throw new Error('أضف Finnhub API Key من الإعدادات ⚙️ للأسعار');
+  const syms=(Array.isArray(symbols)?symbols:[symbols]).filter(Boolean);
+  const results=await Promise.all(syms.map(async sym=>{
+    try{
+      const [q,p]=await Promise.all([
+        workerGet('/quote',{symbol:sym}),
+        workerGet('/profile',{symbol:sym}).catch(()=>({}))
+      ]);
+      if(!q||!q.c) return null;
+      return {ticker:sym,name:p.name||sym,price:q.c||0,change:q.d||0,pct:q.dp||0,
+        high:q.h||0,low:q.l||0,high52:q.h||0,low52:q.l||0,volume:0,
+        mktCap:p.marketCapitalization?p.marketCapitalization*1e6:null,
+        pe:p.pe||null,beta:null,exchange:p.exchange||'',currency:p.currency||'USD',
+        marketOpen:true,logo:p.logo||'',industry:p.finnhubIndustry||'',country:p.country||''};
+    }catch{return null;}
+  }));
+  const valid=results.filter(Boolean);
+  if(!valid.length) throw new Error('تعذّر جلب بيانات الأسهم');
+  return valid;
 }
 
-// ── Stats: Finnhub basic metrics ──
+// ── Stats via Worker ──
 async function yfStats(symbol) {
-  if (!S.finnhubKey) return {};
   try {
-    const fhKeyM = S.finnhubKey || ls('tt_finnhub','');
-    if (!fhKeyM || fhKeyM.startsWith('http')) return {};
-    const [metrics, profile] = await Promise.all([
-      fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${fhKeyM}`).then(r=>r.json()),
-      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${fhKeyM}`).then(r=>r.json()).catch(()=>({}))
+    const [metrics,profile]=await Promise.all([
+      workerGet('/metrics',{symbol}),
+      workerGet('/profile',{symbol}).catch(()=>({}))
     ]);
-    const m = metrics.metric || {};
+    const m=metrics.metric||{};
     return {
-      summaryDetail: {
-        trailingPE:    { raw: m['peInclExtraTTM'] || m['peTTM'] || null },
-        dividendYield: { raw: m['dividendYieldIndicatedAnnual'] || null },
-        beta:          { raw: m['beta'] || null },
-      },
-      defaultKeyStatistics: {
-        trailingEps:  { raw: m['epsTTM'] || null },
-        priceToBook:  { raw: m['pbAnnual'] || null },
-        forwardPE:    { raw: m['forwardPE'] || null },
-      },
-      financialData: {
-        debtToEquity:   { raw: m['totalDebt/totalEquityAnnual'] || null },
-        returnOnEquity: { raw: m['roeRfy'] ? m['roeRfy']/100 : null },
-        grossMargins:   { raw: m['grossMarginTTM'] ? m['grossMarginTTM']/100 : null },
-        currentRatio:   { raw: m['currentRatioAnnual'] || null },
-        revenueGrowth:  { raw: m['revenueGrowthTTMYoy'] ? m['revenueGrowthTTMYoy']/100 : null },
-      },
-      _profile: profile,
-      _metrics: m,
+      summaryDetail:{trailingPE:{raw:m['peInclExtraTTM']||m['peTTM']||null},dividendYield:{raw:m['dividendYieldIndicatedAnnual']||null},beta:{raw:m['beta']||null}},
+      defaultKeyStatistics:{trailingEps:{raw:m['epsTTM']||null},priceToBook:{raw:m['pbAnnual']||null}},
+      financialData:{debtToEquity:{raw:m['totalDebt/totalEquityAnnual']||null},returnOnEquity:{raw:m['roeRfy']?m['roeRfy']/100:null},grossMargins:{raw:m['grossMarginTTM']?m['grossMarginTTM']/100:null},currentRatio:{raw:m['currentRatioAnnual']||null},revenueGrowth:{raw:m['revenueGrowthTTMYoy']?m['revenueGrowthTTMYoy']/100:null}},
     };
   } catch { return {}; }
 }
 
-// ── News: Finnhub first, RSS fallback ──
 async function yfNews(symbol) {
-  const sym = Array.isArray(symbol)?symbol[0]:symbol.split(',')[0].trim();
-  // Finnhub
-  if (S.finnhubKey) {
-    try {
-      const today = new Date().toISOString().slice(0,10);
-      const from  = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-      const res = await fetch(
-        `https://finnhub.io/api/v1/company-news?symbol=${sym}&from=${from}&to=${today}&token=${S.finnhubKey}`
-      );
-      if (res.ok) {
-        const arr = await res.json();
-        if (arr?.length) return arr.slice(0,8).map(n=>({
-          title:   n.headline||'',
-          link:    n.url||'#',
-          publisher: n.source||'',
-          summary: n.summary||'',
-          providerPublishTime: n.datetime||null,
-        }));
-      }
-    } catch {}
-  }
-  // RSS fallback (no key needed)
   try {
-    const rss = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}&region=US&lang=en-US`;
-    const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=6`);
-    if (res.ok) {
-      const d = await res.json();
-      return (d.items||[]).map(n=>({
-        title:   n.title||'',
-        link:    n.link||'#',
-        publisher: n.author||'Yahoo Finance',
-        providerPublishTime: n.pubDate?Math.floor(new Date(n.pubDate).getTime()/1000):null,
-      }));
-    }
+    const sym=Array.isArray(symbol)?symbol[0]:symbol.split(',')[0].trim();
+    const today=new Date().toISOString().slice(0,10);
+    const from=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+    const arr=await workerGet('/news',{symbol:sym,from,to:today});
+    if(arr?.length) return arr.slice(0,8).map(n=>({title:n.headline||'',link:n.url||'#',publisher:n.source||'',summary:n.summary||'',providerPublishTime:n.datetime||null}));
   } catch {}
   return [];
 }
 
-// ── Finnhub general market news ──
 async function getMarketNews() {
-  if (S.finnhubKey) {
-    try {
-      const fhKey2 = S.finnhubKey || ls('tt_finnhub','');
-      if (!fhKey2 || fhKey2.startsWith('http')) throw new Error('no key');
-      const res = await fetch(`https://finnhub.io/api/v1/news?category=general&token=${fhKey2}`);
-      if (res.ok) {
-        const d = await res.json();
-        return (d||[]).slice(0,4).map(n=>({
-          title:   n.headline||'',
-          link:    n.url||'#',
-          publisher: n.source||'',
-          providerPublishTime: n.datetime||null,
-        }));
-      }
-    } catch {}
-  }
-  // RSS fallback
   try {
-    const rss = 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=SPY&region=US&lang=en-US';
-    const res = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=4`);
-    if (res.ok) { const d=await res.json(); return (d.items||[]).map(n=>({title:n.title||'',link:n.link||'#',publisher:'Yahoo Finance',providerPublishTime:n.pubDate?Math.floor(new Date(n.pubDate).getTime()/1000):null})); }
-  } catch {}
-  return [];
-}
-
-// Keep for backward compat (Claude API)
-async function tdFetch(endpoint, params = {}) {
-  // Redirect quote calls to Yahoo Finance
-  if (endpoint === '/quote') {
-    const syms = (params.symbol || '').split(',').map(s => s.trim()).filter(Boolean);
-    const results = await yfQuote(syms);
-    if (syms.length === 1) return results[0] || {};
-    return results;
-  }
-  if (endpoint === '/statistics') {
-    return await yfStats(params.symbol || '');
-  }
-  if (endpoint === '/news') {
-    const news = await yfNews(params.symbol || '');
-    return news;
-  }
-  throw new Error('endpoint not supported');
+    const d=await workerGet('/market-news');
+    return (d||[]).slice(0,4).map(n=>({title:n.headline||'',link:n.url||'#',publisher:n.source||'',providerPublishTime:n.datetime||null}));
+  } catch { return []; }
 }
 
 async function clFetch(prompt,system='') {
@@ -1283,7 +1159,7 @@ function applyMarketStatus(data) {
 let _tickerInterval = null;
 
 async function loadFullTicker() {
-  if (!S.finnhubKey && !S.tdKey) return;
+  // Worker handles auth
   try {
     const syms = ['SPY','QQQ','DIA'];
     const arr = await yfQuote(syms);
@@ -1407,7 +1283,10 @@ async function searchAutocomplete(q) {
   _searchTimer = setTimeout(async () => {
     if (!S.finnhubKey) return;
     try {
-      const d = await workerGet('/search', {q});
+      const fhKeyS = S.finnhubKey || ls('tt_finnhub','');
+      if (!fhKeyS || fhKeyS.startsWith('http')) return;
+      const res = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${fhKeyS}`);
+      const d = await res.json();
       const results = (d.result||[]).filter(r=>r.type==='Common Stock').slice(0,6);
       if (!results.length) { drop.style.display='none'; return; }
       drop.style.display = 'block';
@@ -1442,7 +1321,7 @@ async function loadMarketStatus() {
     applyMarketStatus(data);
   } catch(e) {
     const lbl=document.getElementById('mktLabel');
-    if (lbl) { lbl.textContent = !S.tdKey?'أضف API Key من الإعدادات ⚙️':'تعذّر جلب بيانات السوق'; lbl.style.color='var(--text3)'; }
+    if (lbl) { lbl.textContent = 'تعذّر جلب بيانات السوق'; lbl.style.color='var(--text3)'; }
   }
 }
 
@@ -1852,10 +1731,7 @@ async function translateNews(idx, title, summary) {
 async function loadFinancialAI(ticker, price, pct) {
   const box = document.getElementById('finAI');
   if (!box) return;
-  if (!S.clKey) {
-    box.querySelector('.ai-insight-text').innerHTML = '<span style="color:var(--text3);font-size:12px">أضف Claude API Key للتحليل المالي الذكي</span>';
-    return;
-  }
+
   try {
     const res = await clFetch(
       `قدّم تحليلاً مالياً موجزاً لسهم ${ticker} بسعر حالي $${price} وتغيير ${pct.toFixed(2)}% اليوم.
@@ -1874,10 +1750,7 @@ async function loadFinancialAI(ticker, price, pct) {
 
 async function loadStockAI(ticker, price, pct) {
   const box = document.getElementById('aiInsight');
-  if (!box || !S.clKey) {
-    if (box) box.querySelector('.ai-insight-text').innerHTML = `<span style="color:var(--text3);font-size:12px">أضف Claude API Key من الإعدادات لتفعيل التحليل الذكي</span>`;
-    return;
-  }
+  if (!box) return;
   try {
     const res = await clFetch(
       `حلل سهم ${ticker} بسعر حالي $${price} وتغيير ${pct.toFixed(2)}%. أعطني تقييماً في جملتين فقط: هل يستحق الدراسة الآن وما أهم سبب.`
@@ -2199,7 +2072,7 @@ function filterCal(f, btn) {
 }
 
 async function loadEarningsPreview(name, date, btn) {
-  if (!S.clKey) { alert('أضف Claude API Key من الإعدادات'); return; }
+
   const card = btn.closest('.card');
   const resultDiv = card.querySelector('.earnings-result');
   if (resultDiv) { resultDiv.remove(); return; }
@@ -2358,53 +2231,14 @@ function renderSettings() {
     <h2 style="font-size:18px;font-weight:800;margin-bottom:16px">الإعدادات</h2>
 
     <div class="card" style="margin-bottom:10px">
-      <div class="card-title"><i class="ti ti-key"></i> مفاتيح API</div>
-
-      <!-- TD Key - Required -->
-      <div style="margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
-          <div style="font-size:11px;color:var(--text3);font-weight:600">Twelve Data API Key</div>
-          <span class="tag tag-green" style="font-size:9px">مطلوب — للأسعار</span>
-        </div>
-        <input type="password" id="set_td" value="${S.tdKey}" placeholder="أدخل مفتاح Twelve Data"
-          style="width:100%;padding:10px 12px;border-radius:var(--radius-xs);border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font-en)">
-        <div style="font-size:10px;color:var(--text3);margin-top:4px">
-          مجاني 800 طلب/يوم — <a href="https://twelvedata.com" target="_blank" style="color:var(--primary)">twelvedata.com</a>
+      <div class="card-title"><i class="ti ti-shield-check"></i> الأمان</div>
+      <div style="background:var(--primary-bg);border:1px solid rgba(22,163,74,.2);border-radius:var(--radius-sm);padding:14px;display:flex;align-items:center;gap:12px">
+        <i class="ti ti-shield-check" style="color:var(--green);font-size:28px;flex-shrink:0"></i>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--green)">البيانات محمية ✓</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px;line-height:1.6">جميع مفاتيح API محفوظة في خادم آمن. لا تحتاج إدخال أي مفتاح — افتح التطبيق واستخدمه مباشرة.</div>
         </div>
       </div>
-
-
-      <!-- Finnhub Key -->
-      <div style="margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
-          <div style="font-size:11px;color:var(--text3);font-weight:600">Finnhub API Key</div>
-          <span class="tag tag-green" style="font-size:9px">مطلوب — للأخبار</span>
-        </div>
-        <input type="password" id="set_finnhub" value="${S.finnhubKey}" placeholder="أدخل مفتاح Finnhub"
-          style="width:100%;padding:10px 12px;border-radius:var(--radius-xs);border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font-en)">
-        <div style="font-size:10px;color:var(--text3);margin-top:4px">
-          مجاني 60 طلب/دقيقة — <a href="https://finnhub.io" target="_blank" style="color:var(--primary)">finnhub.io</a>
-          ${S.finnhubKey && !S.finnhubKey.startsWith('http') ? `<div style="margin-top:4px;color:var(--green);font-size:10px">✓ مفتاح محفوظ: ${S.finnhubKey.slice(0,6)}...${S.finnhubKey.slice(-4)}</div>` : `<div style="margin-top:4px;color:var(--red);font-size:10px">✗ لا يوجد مفتاح صحيح</div>`}
-        </div>
-      </div>
-
-      <!-- Claude Key - Optional -->
-      <div style="margin-bottom:12px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
-          <div style="font-size:11px;color:var(--text3);font-weight:600">Claude API Key</div>
-          <span class="tag tag-gray" style="font-size:9px">اختياري — للتحليل الذكي</span>
-        </div>
-        <input type="password" id="set_cl" value="${S.clKey}" placeholder="أدخل مفتاح Claude"
-          style="width:100%;padding:10px 12px;border-radius:var(--radius-xs);border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-family:var(--font-en)">
-        <div style="font-size:10px;color:var(--text3);margin-top:4px">
-          من <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary)">console.anthropic.com</a>
-          — ~$0.03 لكل 100 تحليل
-        </div>
-      </div>
-
-      <button class="btn btn-primary" style="width:100%" onclick="saveSettings()">
-        <i class="ti ti-check"></i> حفظ المفاتيح
-      </button>
     </div>
 
     <div class="card" style="margin-bottom:10px">
@@ -2448,20 +2282,7 @@ function clearAllKeys() {
   renderSettings();
 }
 
-function saveSettings() {
-  const clean = v => {
-    const t = (v||'').trim();
-    // reject if looks like URL or empty
-    return (t.startsWith('http')||t.length<8) ? '' : t;
-  };
-  S.tdKey      = clean(document.getElementById('set_td')?.value);
-  S.finnhubKey = clean(document.getElementById('set_finnhub')?.value);
-  S.clKey      = clean(document.getElementById('set_cl')?.value);
-  lss('tt_tdkey',   S.tdKey);
-  lss('tt_finnhub', S.finnhubKey);
-  lss('tt_clkey',   S.clKey);
-  showToast('تم حفظ المفاتيح ✓');
-}
+function saveSettings() { showToast('الإعدادات محفوظة ✓'); }
 
 function setLang(l) {
   S.lang = l;
