@@ -79,6 +79,128 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ══════════════════════════════════════════
+   AURORA BACKGROUND
+══════════════════════════════════════════ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -20px;
+  z-index: -1;
+  opacity: 0;
+  background: 
+    repeating-linear-gradient(
+      100deg,
+      rgba(22,163,74,0.08) 0%,
+      rgba(22,163,74,0.08) 7%,
+      transparent 10%,
+      transparent 12%,
+      rgba(22,163,74,0.05) 16%
+    ),
+    repeating-linear-gradient(
+      100deg,
+      rgba(16,185,129,0.12) 10%,
+      rgba(52,211,153,0.08) 15%,
+      rgba(110,231,183,0.06) 20%,
+      rgba(167,243,208,0.05) 25%,
+      rgba(22,163,74,0.10) 30%
+    );
+  background-size: 300% 200%, 200% 150%;
+  background-position: 50% 50%, 50% 50%;
+  filter: blur(12px);
+  animation: auroraMove 30s linear infinite;
+  transition: opacity 1s ease;
+}
+
+body.aurora-ready::before {
+  opacity: 1;
+}
+
+[data-theme="dark"] body::before {
+  opacity: 0;
+}
+
+[data-theme="dark"] body::after {
+  content: '';
+  position: fixed;
+  inset: -20px;
+  z-index: -1;
+  background: 
+    repeating-linear-gradient(
+      100deg,
+      rgba(0,0,0,0.8) 0%,
+      rgba(0,0,0,0.8) 7%,
+      transparent 10%,
+      transparent 12%,
+      rgba(0,0,0,0.8) 16%
+    ),
+    repeating-linear-gradient(
+      100deg,
+      rgba(22,163,74,0.15) 10%,
+      rgba(16,185,129,0.10) 15%,
+      rgba(52,211,153,0.08) 20%,
+      rgba(110,231,183,0.06) 25%,
+      rgba(22,163,74,0.12) 30%
+    );
+  background-size: 300% 200%, 200% 150%;
+  background-position: 50% 50%, 50% 50%;
+  filter: blur(14px);
+  animation: auroraMove 30s linear infinite;
+  opacity: 0.7;
+  mask-image: radial-gradient(ellipse at 80% 10%, black 20%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse at 80% 10%, black 20%, transparent 70%);
+}
+
+@keyframes auroraMove {
+  0%   { background-position: 0% 50%, 0% 50%; }
+  50%  { background-position: 200% 50%, 150% 50%; }
+  100% { background-position: 350% 50%, 350% 50%; }
+}
+
+/* Make app & cards slightly transparent to show aurora */
+[data-theme="light"] #app {
+  background: transparent;
+}
+[data-theme="light"] .card {
+  background: rgba(255,255,255,0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+[data-theme="light"] #topNav {
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+[data-theme="light"] #bottomNav {
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+[data-theme="light"] .trade-setup {
+  background: rgba(240,253,244,0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+[data-theme="dark"] #app {
+  background: transparent;
+}
+[data-theme="dark"] .card {
+  background: rgba(26,40,32,0.80);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+[data-theme="dark"] #topNav {
+  background: rgba(15,26,22,0.90);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+[data-theme="dark"] #bottomNav {
+  background: rgba(15,26,22,0.90);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
 button {
   cursor: pointer;
   font-family: var(--font);
@@ -887,115 +1009,26 @@ function lss(k, v) {
 // ── Twelve Data (Prices) ──
 const _td = { count:0, resetAt:0 };
 
+// tdFetch → redirects all calls through Worker
 async function tdFetch(endpoint, params={}) {
-  const key = S.tdKey;
-  if (!key) throw new Error('أضف API Key من الإعدادات');
-  // Rate guard: 7/min
-  const now = Date.now();
-  if (now > _td.resetAt) { _td.count=0; _td.resetAt=now+61000; }
-  if (_td.count >= 7) {
-    await new Promise(r => setTimeout(r, _td.resetAt - Date.now() + 200));
-    _td.count=0; _td.resetAt=Date.now()+61000;
+  if (endpoint === '/quote') {
+    const syms = (params.symbol||'').split(',').map(s=>s.trim()).filter(Boolean);
+    if (!syms.length) return [];
+    const results = await yfQuote(syms);
+    return syms.length === 1 ? results[0]||{} : results;
   }
-  _td.count++;
-  const q = new URLSearchParams({...params, apikey:key}).toString();
-  const res = await fetch(`https://api.twelvedata.com${endpoint}?${q}`);
-  if (res.status===429) throw new Error('تجاوزت الحد — انتظر دقيقة');
-  if (res.status===403) throw new Error('هذه الميزة تحتاج خطة مدفوعة');
-  if (!res.ok) throw new Error('خطأ في الاتصال');
-  const d = await res.json();
-  if (d.status==='error') throw new Error(d.message||'خطأ API');
-  return d;
+  if (endpoint === '/statistics') return await yfStats(params.symbol||'');
+  if (endpoint === '/news') return await yfNews(params.symbol||'');
+  throw new Error('endpoint not supported');
 }
 
-// ── Normalized quote ──
-function tdNorm(q) {
-  if (!q || !q.symbol) return null;
-  const price = parseFloat(q.close||0);
-  const prev  = parseFloat(q.previous_close||price);
-  const pct   = prev ? ((price-prev)/prev*100) : 0;
-  return {
-    ticker:  q.symbol,
-    name:    q.name||q.symbol,
-    price,
-    change:  price-prev,
-    pct,
-    high:    parseFloat(q.high||price),
-    low:     parseFloat(q.low||price),
-    high52:  parseFloat(q.fifty_two_week?.high||price),
-    low52:   parseFloat(q.fifty_two_week?.low||price),
-    volume:  parseInt(q.volume||0),
-    mktCap:  null,
-    pe:      null,
-    beta:    null,
-    exchange: q.exchange||'',
-    marketOpen: q.is_market_open||false,
-    currency: q.currency||'USD',
-  };
-}
-
-// ── Quotes via Worker (no API key needed) ──
-async function yfQuote(symbols) {
-  const syms=(Array.isArray(symbols)?symbols:[symbols]).filter(Boolean);
-  const results=await Promise.all(syms.map(async sym=>{
-    try{
-      const [q,p]=await Promise.all([
-        workerGet('/quote',{symbol:sym}),
-        workerGet('/profile',{symbol:sym}).catch(()=>({}))
-      ]);
-      if(!q||!q.c) return null;
-      return {ticker:sym,name:p.name||sym,price:q.c||0,change:q.d||0,pct:q.dp||0,
-        high:q.h||0,low:q.l||0,high52:q.h||0,low52:q.l||0,volume:0,
-        mktCap:p.marketCapitalization?p.marketCapitalization*1e6:null,
-        pe:p.pe||null,beta:null,exchange:p.exchange||'',currency:p.currency||'USD',
-        marketOpen:true,logo:p.logo||'',industry:p.finnhubIndustry||'',country:p.country||''};
-    }catch{return null;}
-  }));
-  const valid=results.filter(Boolean);
-  if(!valid.length) throw new Error('تعذّر جلب بيانات الأسهم');
-  return valid;
-}
-
-// ── Stats via Worker ──
-async function yfStats(symbol) {
-  try {
-    const [metrics,profile]=await Promise.all([
-      workerGet('/metrics',{symbol}),
-      workerGet('/profile',{symbol}).catch(()=>({}))
-    ]);
-    const m=metrics.metric||{};
-    return {
-      summaryDetail:{trailingPE:{raw:m['peInclExtraTTM']||m['peTTM']||null},dividendYield:{raw:m['dividendYieldIndicatedAnnual']||null},beta:{raw:m['beta']||null}},
-      defaultKeyStatistics:{trailingEps:{raw:m['epsTTM']||null},priceToBook:{raw:m['pbAnnual']||null}},
-      financialData:{debtToEquity:{raw:m['totalDebt/totalEquityAnnual']||null},returnOnEquity:{raw:m['roeRfy']?m['roeRfy']/100:null},grossMargins:{raw:m['grossMarginTTM']?m['grossMarginTTM']/100:null},currentRatio:{raw:m['currentRatioAnnual']||null},revenueGrowth:{raw:m['revenueGrowthTTMYoy']?m['revenueGrowthTTMYoy']/100:null}},
-    };
-  } catch { return {}; }
-}
-
-async function yfNews(symbol) {
-  try {
-    const sym=Array.isArray(symbol)?symbol[0]:symbol.split(',')[0].trim();
-    const today=new Date().toISOString().slice(0,10);
-    const from=new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-    const arr=await workerGet('/news',{symbol:sym,from,to:today});
-    if(arr?.length) return arr.slice(0,8).map(n=>({title:n.headline||'',link:n.url||'#',publisher:n.source||'',summary:n.summary||'',providerPublishTime:n.datetime||null}));
-  } catch {}
-  return [];
-}
-
-async function getMarketNews() {
-  try {
-    const d=await workerGet('/market-news');
-    return (d||[]).slice(0,4).map(n=>({title:n.headline||'',link:n.url||'#',publisher:n.source||'',providerPublishTime:n.datetime||null}));
-  } catch { return []; }
-}
 
 async function clFetch(prompt,system='') {
   const r=await fetch(WORKER_URL+'/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,system:system||'أنت محلل أسهم محترف.'})});
   const d=await r.json(); return d.content?.[0]?.text||'';
 }
 
-function normQuote(q) { if(q && (q.ticker||q.symbol)) { if(q.ticker) return q; q.ticker=q.symbol; return q; } // normalize
+function normQuote(q) { if(q && q.ticker && q.price!==undefined) return q; if(q && q.symbol && !q.ticker) { q.ticker=q.symbol; return q; } // normalize
   if (!q) return { ticker:'', name:'', price:0, change:0, pct:0, high:0, low:0, high52:0, low52:0, volume:0, mktCap:null, pe:null, beta:null, marketState:'CLOSED', preMarket:null, postMarket:null };
   // Yahoo Finance format
   const price  = parseFloat(q.price || q.regularMarketPrice || q.close || 0);
@@ -1037,6 +1070,8 @@ function toggleTheme() {
   S.theme = S.theme === 'dark' ? 'light' : 'dark';
   lss('tt_theme', S.theme);
   applyTheme();
+  // Activate aurora background after short delay
+  setTimeout(() => document.body.classList.add('aurora-ready'), 300);
 }
 
 function setMarket(m) {
@@ -1297,10 +1332,7 @@ async function searchAutocomplete(q) {
   _searchTimer = setTimeout(async () => {
     if (!S.finnhubKey) return;
     try {
-      const fhKeyS = S.finnhubKey || ls('tt_finnhub','');
-      if (!fhKeyS || fhKeyS.startsWith('http')) return;
-      const res = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(q)}&token=${fhKeyS}`);
-      const d = await res.json();
+      const d = await workerGet('/search', {q});
       const results = (d.result||[]).filter(r=>r.type==='Common Stock').slice(0,6);
       if (!results.length) { drop.style.display='none'; return; }
       drop.style.display = 'block';
