@@ -2900,27 +2900,35 @@ function momentumBar(pct, score) {
     </div>`;
 }
 
+function ideaCardHTML(idea, extraStyle='') {
+  const priceColor = idea.pct >= 0.5 ? 'var(--green)' : idea.pct <= -0.5 ? 'var(--red)' : 'var(--amber)';
+  return `
+    <div class="idea-card${extraStyle ? ' card' : ''}" style="${extraStyle}" onclick="openStock('${idea.ticker}')">
+      <!-- Row 1: ticker box | name + score | price + pct -->
+      <div style="display:flex;align-items:center;gap:8px;width:100%">
+        <div class="idea-ticker" style="width:38px;height:38px;font-size:10px;flex-shrink:0">${idea.ticker}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0">
+              <span style="font-size:13px;font-weight:800;font-family:var(--font-en)">${idea.ticker}</span>
+              <span style="font-size:10px;color:var(--text3);font-weight:600;white-space:nowrap">Score ${idea.score}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+              <span style="font-size:14px;font-weight:800;font-family:var(--font-en)">${fmtPrice(idea.price)}</span>
+              <span style="font-size:10px;font-weight:700;color:${priceColor}">${fmtPct(idea.pct)}</span>
+            </div>
+          </div>
+          <!-- Row 2: bias + bar + risk -->
+          ${momentumBar(idea.pct, idea.score)}
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderIdeas(ideas) {
   const box = document.getElementById('ideasList');
   if (!box) return;
-  box.innerHTML = ideas.map(idea => {
-    const cls = scoreClass(idea.score);
-    return `
-      <div class="idea-card" onclick="openStock('${idea.ticker}')">
-        <div class="idea-ticker">${idea.ticker}</div>
-        <div class="idea-info">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-            <span style="font-size:13px;font-weight:700;font-family:var(--font-en)">${idea.ticker}</span>
-            <span style="font-size:10px;color:var(--text3);font-weight:600">Score ${idea.score}</span>
-          </div>
-          ${momentumBar(idea.pct, idea.score)}
-        </div>
-        <div class="idea-right" style="text-align:left;flex-shrink:0">
-          <div style="font-size:14px;font-weight:800;font-family:var(--font-en)">${fmtPrice(idea.price)}</div>
-          <div class="pct-badge ${idea.pct>=0?'up':'dn'}" style="font-size:10px;margin-top:1px">${fmtPct(idea.pct)}</div>
-        </div>
-      </div>`;
-  }).join('');
+  box.innerHTML = ideas.map(idea => ideaCardHTML(idea)).join('');
 }
 
 // News
@@ -3695,21 +3703,7 @@ async function loadDiscoverStocks() {
     }));
     box.innerHTML = ideas.map(idea => {
       const cls = scoreClass(idea.score);
-      return `
-        <div class="idea-card card" style="margin-bottom:8px;padding:12px 14px" onclick="openStock('${idea.ticker}')">
-          <div class="idea-ticker">${idea.ticker}</div>
-          <div class="idea-info">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-              <span style="font-size:13px;font-weight:700;font-family:var(--font-en)">${idea.ticker}</span>
-              <span style="font-size:10px;color:var(--text3);font-weight:600">Score ${idea.score}</span>
-            </div>
-            ${momentumBar(idea.pct, idea.score)}
-          </div>
-          <div class="idea-right" style="text-align:left;flex-shrink:0">
-            <div style="font-size:14px;font-weight:800;font-family:var(--font-en)">${fmtPrice(idea.price)}</div>
-            <div class="pct-badge ${idea.pct>=0?'up':'dn'}" style="font-size:10px;margin-top:1px">${fmtPct(idea.pct)}</div>
-          </div>
-        </div>`;
+      return ideaCardHTML(idea, 'margin-bottom:8px;padding:12px 14px');
     }).join('');
   } catch(e) {
     box.innerHTML = `<div class="empty-state"><i class="ti ti-alert-circle"></i><p>تعذّر تحميل البيانات</p><button class="btn btn-outline btn-sm" style="margin-top:8px" onclick="loadDiscoverStocks()"><i class="ti ti-refresh"></i> إعادة المحاولة</button></div>`;
