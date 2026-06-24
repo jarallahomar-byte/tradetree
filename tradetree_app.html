@@ -440,14 +440,13 @@ html[lang="en"][data-theme="dark"] .logo-en.logo-dark-mode { display: block; }
 .idea-card {
   display: flex;
   align-items: center;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--border2);
   gap: 10px;
   cursor: pointer;
   transition: opacity .15s;
+  background: var(--card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
 }
-.idea-card:last-child { border-bottom: none; padding-bottom: 0; }
-.idea-card:first-child { padding-top: 0; }
 .idea-card:hover { opacity: .8; }
 
 .idea-ticker {
@@ -2885,11 +2884,13 @@ function updateIdeasTimestamp(ts) {
 // MOMENTUM BAR HELPER
 // ══════════════════════════════════════════
 function momentumBar(pct, score) {
-  // score: TT Score 0-100 — bar width + risk
-  // pct: daily change % — bias direction only
+  // score: TT Score 0-100 — bar width only
+  // pct: daily change % — bias direction + volatility-based risk
   const color = pct >= 0.5 ? 'var(--green)' : pct <= -0.5 ? 'var(--red)' : 'var(--amber)';
-  const riskKey = score >= 75 ? 'risk_low' : score >= 50 ? 'risk_mid' : 'risk_high';
-  const riskColor = score >= 75 ? 'var(--green)' : score >= 50 ? 'var(--amber)' : 'var(--red)';
+  // Risk based on daily volatility (more meaningful for traders than score)
+  const volatility = Math.abs(pct);
+  const riskKey = volatility > 3 ? 'risk_high' : volatility > 1 ? 'risk_mid' : 'risk_low';
+  const riskColor = riskKey === 'risk_high' ? 'var(--red)' : riskKey === 'risk_mid' ? 'var(--amber)' : 'var(--green)';
   const biasKey = pct >= 0.5 ? 'bias_bull' : pct <= -0.5 ? 'bias_bear' : 'bias_neutral';
   return `<div style="margin-top:4px;display:flex;align-items:center;gap:5px">
       <span style="font-size:9px;font-weight:700;color:${color};white-space:nowrap">${t(biasKey)}</span>
@@ -2928,7 +2929,7 @@ function ideaCardHTML(idea, extraStyle='') {
 function renderIdeas(ideas) {
   const box = document.getElementById('ideasList');
   if (!box) return;
-  box.innerHTML = ideas.map(idea => ideaCardHTML(idea)).join('');
+  box.innerHTML = ideas.map(idea => ideaCardHTML(idea, 'margin-bottom:8px;padding:12px 14px')).join('');
 }
 
 // News
